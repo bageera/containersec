@@ -1,0 +1,172 @@
+
+version: '3.4'
+services:
+  mongodb:
+    image: mongo:4.2
+    container_name: mongodb
+    networks:
+      - traefik_proxy
+    volumes:
+      - '${USERDIR}/mongo:/config'
+      - '${USERDIR}/mongo/mongo_data:/data/db'
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+    command:
+      - "--auth"
+    restart: unless-stopped
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.5
+    container_name: elasticsearch
+    networks:
+      - traefik_proxy    
+    environment:
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=panther-cluster
+      - bootstrap.memory_lock=true
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    volumes:
+      - "${USERDIR}/es/data:/usr/share/elasticsearch/data"
+  
+  unms:
+    image: nico640/docker-unms:latest
+    container_name: unms
+    restart: always
+    networks:
+      - ${CONTAINER_NETWORK}
+    environment: 
+      - TZ=${TZ}
+    volumes:
+      - '${USERDIR}/unms:/config'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=unms"
+      - "traefik.port=443"
+      #- "traefik.http.routers.unms-secure.rule=Host(`unms.${DOMAIN}`)"
+      #- "traefik.http.routers.unms-secure.tls=true"
+      - "traefik.tcp.routers.unms.entrypoints=web-secure"
+      - "traefik.tcp.routers.unms.rule=HostSNI(`unms.panther.local`)"
+      - "traefik.tcp.routers.unms.tls=true"
+      - "traefik.tcp.routers.unms.tls.passthrough=true"
+      - "traefik.tcp.routers.unms.service=unms"
+      - "traefik.tcp.services.unms.loadbalancer.server.port=443"
+      - "traefik.udp.routers.netflow.entrypoints=netflow"
+      - "traefik.udp.routers.netflow.service=netflow"
+      - "traefik.udp.services.netflow.loadbalancer.server.port=2055"
+      
+
+    
+  graylog:
+    image: graylog/graylog:3.2
+    container_name: graylog
+    volumes:
+      - 'graylog_journal:/usr/share/graylog/data'
+        #- '${USERDIR}/graylog/config:/usr/share/graylog/data/config'
+    networks:
+      - traefik_proxy
+    environment:
+      # CHANGE ME (must be at least 16 characters)!
+      # Generate one by using for example: pwgen -N 1 -s 96
+      - GRAYLOG_PASSWORD_SECRET=${GRAYLOG_PASS}
+      # Password: admin
+      - GRAYLOG_ROOT_PASSWORD_SHA2=${GRAYLOG_ROOT_SHA}
+      - GRAYLOG_HTTP_EXTERNAL_URI=http://graylog.${DOMAIN}/
+      - 'GRAYLOG_MONGODB_URI=mongodb://${GRAYLOG_USER}:${GRAYLOG_PASS}@mongodb/${GRAYLOG_DB}'
+    links:
+      - mongodb:mongodb
+      - elasticsearch
+      
+    depends_on:
+      - mongodb
+      - elasticsearch
+      
+    ports:
+      # Graylog web interface and REST API
+      #- 9999:9000
+      # Syslog TCP
+      - 1514:1514
+      # Syslog UDP
+      #- 1514:1514/udp
+      # GELF TCP
+      - 12201:12201
+      # GELF UDP
+      #- 12201:12201/udp
+      # GELF SNMP
+      - 1161:1161/udp
+      # NETFLOW
+      #- 2055:2055/udp
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=graylog"
+      - "traefik.port=9000"
+      #- "traefik.docker.network=traefik_proxy"
+      - "traefik.http.routers.graylog.entrypoints=web"
+      - "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAIN}`)"
+      #- "traefik.http.middlewares.graylog-https-redirect.redirectscheme.scheme=https"
+      #- "traefik.http.routers.graylog.middlewares=graylog-https-redirect"
+      # - "traefik.http.routers.graylog-secure.entrypoints=web-secure"
+      # - "traefik.http.routers.graylog-secure.rule=Host(`graylog.${DOMAINNAME}`) || Host(`graylog.${DOMAIN}`)"
+      # - "traefik.http.routers.graylog-secure.tls=true"
+      # - "traefik.http.routers.graylog-secure.tls.certresolver=http"
+      # - "traefik.http.routers.graylog-secure.service=graylog"
+      - "traefik.http.services.graylog.loadbalancer.server.port=9000"
+      - "traefik.udp.routers.syslog.entrypoints=syslog"
+      - "traefik.udp.routers.syslog.service=syslog"
+      - "traefik.udp.services.syslog.loadbalancer.server.port=1514"
+      - "traefik.udp.routers.gelf.entrypoints=gelf"
+      - "traefik.udp.routers.gelf.service=gelf"
+      - "traefik.udp.services.gelf.loadbalancer.server.port=12201"
+      - "traefik.udp.routers.netflow.entrypoints=netflow"
+      - "traefik.udp.routers.netflow.service=netflow"
+      - "traefik.udp.services.netflow.loadbalancer.server.port=2055"
+
+    restart: unless-stopped
+
+  pritunl:
+    image: andrey0001/pritunl
+    container_name: pritunl
+    networks:
+      - traefik_proxy
+    privileged: true
+    depends_on:
+      - mongodb
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    links:
+      - mongodb:mongodb
+    environment:
+      - 'MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongodb:27017/${PRITUNL_DB}'
+      - NODE_ID="${NODE_ID}"
+      - REVERSE_PROXY=true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=pritunl"
+      - "traefik.tcp.routers.pritunl.entrypoints=web-secure"
+      - "traefik.tcp.routers.pritunl.service=pritunl"
+      - "traefik.tcp.services.pritunl.loadbalancer.server.port=443"
+      - "traefik.tcp.routers.pritunl.rule=HostSNI(`pritunl.${DOMAIN}`)"
+      - "traefik.tcp.routers.pritunl.tls=true"
+      - "traefik.tcp.routers.pritunl.tls.passthrough=true"
+      - "traefik.udp.routers.vpn.entrypoints=vpn"
+      - "traefik.udp.routers.vpn.service=vpn"
+      - "traefik.udp.services.vpn.loadbalancer.server.port=15919"
+
+
+networks:
+  traefik_proxy:
+    external:
+      name: traefik_proxy
+  default:
+    driver: bridge
+
+
+volumes:
+  graylog_journal:
+    driver: local
+  mongo_data:
+    driver: local
