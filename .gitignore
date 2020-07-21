@@ -2,3 +2,4 @@
 mongo/*
 es
 unms
+grailsdb.*

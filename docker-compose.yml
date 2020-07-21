@@ -32,7 +32,47 @@ services:
 
     volumes:
       - "${USERDIR}/es/data:/usr/share/elasticsearch/data"
-  
+  rundeck:
+    image: rundeck/rundeck:3.2.8
+    container_name: rundeck
+    links:
+      - mysql
+    environment:
+      - "RUNDECK_ADMIN_PASSWORD='jsohan566'"
+      - "RUNDECK_SERVER_FORWARDED=true"
+      - "RUNDECK_GRAILS_URL=http://rundeck.panther.local"
+      - "EXTERNAL_SERVER_URL=http://rundeck.panther.local"
+      - "RUNDECK_UID=${PUID}"
+      - "RUNDECK_GID=${PGID}"
+      - "RUNDECK_DATABASE_DRIVER=com.mysql.jdbc.Driver"
+      - "RUNDECK_DATABASE_USERNAME=rundeck"
+      - "RUNDECK_DATABASE_PASSWORD=rundeck"
+      - "RUNDECK_DATABASE_URL=jdbc:mysql://mysql/rundeck?autoReconnect=true&useSSL=false"
+
+    volumes:
+      #- '${USERDIR}/rundeck/etc:/home/rundeck/etc'
+      #- '${USERDIR}/rundeck/config:/home/rundeck/server/config'
+      - '${USERDIR}/rundeck/data:/home/rundeck/server/data'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=rundeck"
+      - "traefik.port=4440"
+      - "traefik.http.routers.rundeck.entrypoints=web"
+      - "traefik.http.routers.rundeck.rule=Host(`rundeck.${DOMAIN}`)"
+      - "traefik.http.services.rundeck.loadbalancer.server.port=4440"
+  mysql:
+    image: mysql:5.7
+    container_name: mysql
+    expose:
+      - 3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=rundeck
+      - MYSQL_USER=rundeck
+      - MYSQL_PASSWORD=rundeck
+    volumes:
+      - dbdata:/var/lib/mysql
+
   unms:
     image: nico640/docker-unms:latest
     container_name: unms
@@ -169,4 +209,6 @@ volumes:
   graylog_journal:
     driver: local
   mongo_data:
+    driver: local
+  dbdata:
     driver: local
