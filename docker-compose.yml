@@ -15,8 +15,22 @@ services:
     command:
       - "--auth"
     restart: unless-stopped
+  elastichq:
+    image: elastichq/elasticsearch-hq
+    container_name: elastichq
+    networks:
+      - traefik_proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=elastichq"
+      - "traefik.port=5000"
+      - "traefik.http.routers.elastichq.entrypoints=web"
+      - "traefik.http.routers.elastichq.rule=Host(`elastichq.${DOMAIN}`)"
+      - "traefik.http.services.elastichq.loadbalancer.server.port=5000"
+
+
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.5
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.13
     container_name: elasticsearch
     networks:
       - traefik_proxy    
@@ -24,6 +38,7 @@ services:
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - cluster.name=panther-cluster
       - bootstrap.memory_lock=true
+      - discovery.type=single-node
 
     ulimits:
       memlock:
@@ -31,7 +46,10 @@ services:
         hard: -1
 
     volumes:
-      - "${USERDIR}/es/data:/usr/share/elasticsearch/data"
+      - "es_nas:/usr/share/elasticsearch/data"
+      - "${USERDIR}/es/plugins:/usr/share/elasticsearch/plugins"
+      - "${USERDIR}/es/logs:/usr/share/elasticsearch/logs"
+      - "${USERDIR}/es/config:/usr/share/elasticsearch/config"
   rundeck:
     image: rundeck/rundeck:3.2.8
     container_name: rundeck
@@ -44,6 +62,7 @@ services:
       - "EXTERNAL_SERVER_URL=http://rundeck.panther.local"
       - "RUNDECK_UID=${PUID}"
       - "RUNDECK_GID=${PGID}"
+      - "RUNDECK_JAAS_MODULES_1=PropertyFileLoginModule"
       - "RUNDECK_DATABASE_DRIVER=com.mysql.jdbc.Driver"
       - "RUNDECK_DATABASE_USERNAME=rundeck"
       - "RUNDECK_DATABASE_PASSWORD=rundeck"
@@ -51,7 +70,7 @@ services:
 
     volumes:
       #- '${USERDIR}/rundeck/etc:/home/rundeck/etc'
-      #- '${USERDIR}/rundeck/config:/home/rundeck/server/config'
+      - '${USERDIR}/rundeck/config:/home/rundeck/server/config'
       - '${USERDIR}/rundeck/data:/home/rundeck/server/data'
     labels:
       - "traefik.enable=true"
@@ -100,13 +119,53 @@ services:
       - "traefik.udp.services.netflow.loadbalancer.server.port=2055"
       
 
-    
+  unifi-controller:
+    image: ghcr.io/linuxserver/unifi-controller
+    container_name: unifi-controller
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - MEM_LIMIT=1024M #optional
+    volumes:
+      - ${USERDIR}/unifi:/config
+    ports:
+      - 3478:3478/udp
+      - 10001:10001/udp
+      - 8080:8080
+      #- 8443:8443
+      - 1900:1900/udp #optional
+      - 8843:8843 #optional
+      - 8880:8880 #optional
+      - 6789:6789 #optional
+      - 5514:5514 #optional
+      - 161:161 
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=unifi"
+      - "traefik.port=8443"
+      #- "traefik.http.routers.unms-secure.rule=Host(`unms.${DOMAIN}`)"
+      #- "traefik.http.routers.unms-secure.tls=true"
+      - "traefik.http.routers.unifi.entrypoints=web"
+      - "traefik.http.routers.unifi.rule=Host(`unifi.${DOMAIN}`)"
+      - "traefik.http.services.unifi.loadbalancer.server.port=8080"
+      - "traefik.tcp.routers.unifi.entrypoints=web-secure"
+      - "traefik.tcp.routers.unifi.rule=HostSNI(`unifi.panther.local`)"
+      - "traefik.tcp.routers.unifi.tls=true"
+      - "traefik.tcp.routers.unifi.tls.passthrough=true"
+      - "traefik.tcp.routers.unifi.service=unifi"
+      - "traefik.tcp.services.unifi.loadbalancer.server.port=8443"
+      - "traefik.udp.routers.discovery.entrypoints=discovery"
+      - "traefik.udp.routers.discovery.service=discovery"
+      - "traefik.udp.services.discovery.loadbalancer.server.port=1900"
+
   graylog:
-    image: graylog/graylog:3.2
+    image: graylog/graylog:4.0
     container_name: graylog
     volumes:
       - 'graylog_journal:/usr/share/graylog/data'
-        #- '${USERDIR}/graylog/config:/usr/share/graylog/data/config'
+      - '${USERDIR}/graylog/plugin:/graytemp'
+      - '${USERDIR}/graylog/etc:/etc/graylog'
     networks:
       - traefik_proxy
     environment:
@@ -189,7 +248,7 @@ services:
       - "traefik.tcp.routers.pritunl.entrypoints=web-secure"
       - "traefik.tcp.routers.pritunl.service=pritunl"
       - "traefik.tcp.services.pritunl.loadbalancer.server.port=443"
-      - "traefik.tcp.routers.pritunl.rule=HostSNI(`pritunl.${DOMAIN}`)"
+      - "traefik.tcp.routers.pritunl.rule=HostSNI(`pritunl.${DOMAINNAME}`)"
       - "traefik.tcp.routers.pritunl.tls=true"
       - "traefik.tcp.routers.pritunl.tls.passthrough=true"
       - "traefik.udp.routers.vpn.entrypoints=vpn"
@@ -212,3 +271,9 @@ volumes:
     driver: local
   dbdata:
     driver: local
+  es_nas:
+    driver: local 
+    driver_opts:
+        type: nfs
+        o: addr=diskstation.local,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume1/backups/es"
