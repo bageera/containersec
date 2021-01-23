@@ -22,6 +22,22 @@ stop:
 dbshell:
 	@docker-compose exec mongodb bash
 
+rundeckshell:
+	@docker-compose exec rundeck bash
+
+rundeckroot:
+	@docker-compose exec -u 0 rundeck bash
+
+rundeckrestart:
+	@docker-compose restart rundeck
+
+rundecklogs:
+	@docker-compose logs rundeck
+
+graylogrestart:
+	@docker-compose restart graylog
+
 up:
+	echo deploying
 	@docker-compose up -d 
 
