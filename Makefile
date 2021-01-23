@@ -37,6 +37,8 @@ rundecklogs:
 graylogrestart:
 	@docker-compose restart graylog
 
+
+
 up:
 	echo deploying
 	@docker-compose up -d 
