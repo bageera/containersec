@@ -3,3 +3,5 @@ mongo/*
 es
 unms
 grailsdb.*
+graylog/etc/*
+unifi/*
