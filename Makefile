@@ -10,7 +10,7 @@ ps:
 	@docker-compose ps
 
 build:
-	@docker-compose pull pritunl
+	@docker-compose pull wireguard
 	@docker-compose pull mongodb
 
 shell:
@@ -37,6 +37,8 @@ rundecklogs:
 graylogrestart:
 	@docker-compose restart graylog
 
+graylogbuild:
+	@docker-compose up -d graylog
 
 
 up:

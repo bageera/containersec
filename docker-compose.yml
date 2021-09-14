@@ -46,7 +46,7 @@ services:
         hard: -1
 
     volumes:
-      - "es_nas:/usr/share/elasticsearch/data"
+      - "esnewdata_nas:/usr/share/elasticsearch/data"
       - "${USERDIR}/es/plugins:/usr/share/elasticsearch/plugins"
       - "${USERDIR}/es/logs:/usr/share/elasticsearch/logs"
       - "${USERDIR}/es/config:/usr/share/elasticsearch/config"
@@ -160,10 +160,10 @@ services:
       - "traefik.udp.services.discovery.loadbalancer.server.port=1900"
 
   graylog:
-    image: graylog/graylog:4.0
+    image: graylog/graylog:4.0.7-1
     container_name: graylog
     volumes:
-      - 'graylog_journal:/usr/share/graylog/data'
+      - 'graylog_nas:/usr/share/graylog/data'
       - '${USERDIR}/graylog/plugin:/graytemp'
       - '${USERDIR}/graylog/etc:/etc/graylog'
     networks:
@@ -205,14 +205,14 @@ services:
       - "traefik.port=9000"
       #- "traefik.docker.network=traefik_proxy"
       - "traefik.http.routers.graylog.entrypoints=web"
-      - "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAIN}`)"
-      #- "traefik.http.middlewares.graylog-https-redirect.redirectscheme.scheme=https"
-      #- "traefik.http.routers.graylog.middlewares=graylog-https-redirect"
-      # - "traefik.http.routers.graylog-secure.entrypoints=web-secure"
-      # - "traefik.http.routers.graylog-secure.rule=Host(`graylog.${DOMAINNAME}`) || Host(`graylog.${DOMAIN}`)"
-      # - "traefik.http.routers.graylog-secure.tls=true"
-      # - "traefik.http.routers.graylog-secure.tls.certresolver=http"
-      # - "traefik.http.routers.graylog-secure.service=graylog"
+        #- "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAINNAME}`)"
+      - "traefik.http.middlewares.graylog-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.graylog.middlewares=graylog-https-redirect"
+      - "traefik.http.routers.graylog-secure.entrypoints=web-secure"
+      - "traefik.http.routers.graylog-secure.rule=Host(`graylog.${DOMAINNAME}`) || Host(`graylog.${DOMAIN}`)"
+      - "traefik.http.routers.graylog-secure.tls=true"
+      - "traefik.http.routers.graylog-secure.tls.certresolver=http"
+      - "traefik.http.routers.graylog-secure.service=graylog"
       - "traefik.http.services.graylog.loadbalancer.server.port=9000"
       - "traefik.udp.routers.syslog.entrypoints=syslog"
       - "traefik.udp.routers.syslog.service=syslog"
@@ -226,34 +226,30 @@ services:
 
     restart: unless-stopped
 
-  pritunl:
-    image: andrey0001/pritunl
-    container_name: pritunl
-    networks:
-      - traefik_proxy
-    privileged: true
-    depends_on:
-      - mongodb
-    devices:
-      - "/dev/net/tun:/dev/net/tun"
-    links:
-      - mongodb:mongodb
+  wireguard:
+    image: ghcr.io/linuxserver/wireguard
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
     environment:
-      - 'MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongodb:27017/${PRITUNL_DB}'
-      - NODE_ID="${NODE_ID}"
-      - REVERSE_PROXY=true
-    labels:
-      - "traefik.enable=true"
-      - "traefik.backend=pritunl"
-      - "traefik.tcp.routers.pritunl.entrypoints=web-secure"
-      - "traefik.tcp.routers.pritunl.service=pritunl"
-      - "traefik.tcp.services.pritunl.loadbalancer.server.port=443"
-      - "traefik.tcp.routers.pritunl.rule=HostSNI(`pritunl.${DOMAINNAME}`)"
-      - "traefik.tcp.routers.pritunl.tls=true"
-      - "traefik.tcp.routers.pritunl.tls.passthrough=true"
-      - "traefik.udp.routers.vpn.entrypoints=vpn"
-      - "traefik.udp.routers.vpn.service=vpn"
-      - "traefik.udp.services.vpn.loadbalancer.server.port=15919"
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ={TZ|}
+      - SERVERURL=wireguard.${DOMAIN} #optional
+      - SERVERPORT=51820 #optional
+      - PEERS=1 #optional
+      - PEERDNS=auto #optional
+      #- INTERNAL_SUBNET=10.13.13.0 #optional
+      - ALLOWEDIPS=0.0.0.0/0 #optional
+    volumes:
+      - ${USERDIR}/wireguard/config:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
 
 
 networks:
@@ -265,15 +261,19 @@ networks:
 
 
 volumes:
-  graylog_journal:
+  graylog_nas:
     driver: local
+    driver_opts:
+      type: nfs
+      o: addr=192.168.15.61,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+      device: ":/volume2/graylog"
   mongo_data:
     driver: local
   dbdata:
     driver: local
-  es_nas:
-    driver: local 
+  esnewdata_nas:
+    driver: local
     driver_opts:
         type: nfs
-        o: addr=diskstation.local,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
-        device: ":/volume1/backups/es"
+        o: addr=192.168.15.61,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume2/esdata"
