@@ -5,12 +5,13 @@ reset=`tput sgr0`
 
 default:
 	docker-compose ps
+update:
+	@docker-compose up -d
 
 ps:
 	@docker-compose ps
 
 build:
-	@docker-compose pull wireguard
 	@docker-compose pull mongodb
 
 shell:
@@ -40,6 +41,13 @@ graylogrestart:
 graylogbuild:
 	@docker-compose up -d graylog
 
+wireguard:
+	docker-compose up -d wg
+wg_logs:
+	docker-compose logs wg
+
+wireguard-recreate:
+	@docker-compose up -d --force-recreate wg
 
 up:
 	echo deploying
