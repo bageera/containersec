@@ -2,7 +2,7 @@
 version: '3.4'
 services:
   mongodb:
-    image: mongo:4.2
+    image: mongo:latest
     container_name: mongodb
     networks:
       - traefik_proxy
@@ -15,6 +15,35 @@ services:
     command:
       - "--auth"
     restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - 8081:8081/tcp
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      #- ME_CONFIG_MONGODB_ENABLE_ADMIN=true
+      #- ME_CONFIG_MONGODB_ADMINUSERNAME=root
+      #- ME_CONFIG_MONGODB_ADMINPASSWORD=pass12345
+      - ME_CONFIG_MONGODB_AUTH_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - ME_CONFIG_MONGODB_AUTH_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+      - ME_CONFIG_BASICAUTH_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
+      - ME_CONFIG_BASICAUTH_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - ${USERDIR}/mongo/mongo_data:/data/db
+    networks:
+      - traefik_proxy
+    links:
+      - mongodb:mongodb
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=me"
+      - "traefik.port=8081"
+      - "traefik.tcp.routers.mongo-express.entrypoints=mongo"
+      - "traefik.http.routers.mongo-express.rule=Host(`me.${DOMAIN}`)"
+      - "traefik.tcp.services.mongo-express.loadbalancer.server.port=8081"
+
   elastichq:
     image: elastichq/elasticsearch-hq
     container_name: elastichq
@@ -30,15 +59,28 @@ services:
 
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.13
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
     container_name: elasticsearch
+    dns:
+      - 192.168.15.75
     networks:
       - traefik_proxy    
     environment:
+      # old settings
+      - http.host=0.0.0.0
+      - transport.host=localhost
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - cluster.name=panther-cluster
-      - bootstrap.memory_lock=true
       - discovery.type=single-node
+      - node.name=es01
+      #- bootstrap.memory_lock=true
+      #- "bootstrap.password=false"
+      #- "xpack.security.enabled=false"
+      #- "ingest.geoip.downloader.enabled=false"
+      #- xpack.license.self_generated.type=trial
+      # - ES_SETTING_BOOTSTRAP_MEMORY__LOCK=true
+      - KEYSTORE_PASSWORD=jsohan566
+      - ELASTIC_PASSWORD_FILE=/usr/share/elasticsearch/config/bootstrapPassword.txt
 
     ulimits:
       memlock:
@@ -50,9 +92,19 @@ services:
       - "${USERDIR}/es/plugins:/usr/share/elasticsearch/plugins"
       - "${USERDIR}/es/logs:/usr/share/elasticsearch/logs"
       - "${USERDIR}/es/config:/usr/share/elasticsearch/config"
+    restart: unless-stopped
+    logging:
+            driver: "gelf"
+            options:
+                gelf-address: "udp://${IP_ADDRESS}:12201"
+
   rundeck:
     image: rundeck/rundeck:3.2.8
     container_name: rundeck
+    dns:
+      - 9.9.9.9
+    networks:
+      - traefik_proxy
     links:
       - mysql
     environment:
@@ -72,6 +124,7 @@ services:
       #- '${USERDIR}/rundeck/etc:/home/rundeck/etc'
       - '${USERDIR}/rundeck/config:/home/rundeck/server/config'
       - '${USERDIR}/rundeck/data:/home/rundeck/server/data'
+      - '/home/bageera/.ssh:/home/rundeck/.ssh'
     labels:
       - "traefik.enable=true"
       - "traefik.backend=rundeck"
@@ -79,9 +132,17 @@ services:
       - "traefik.http.routers.rundeck.entrypoints=web"
       - "traefik.http.routers.rundeck.rule=Host(`rundeck.${DOMAIN}`)"
       - "traefik.http.services.rundeck.loadbalancer.server.port=4440"
+    restart: unless-stopped
+    logging:
+            driver: "gelf"
+            options:
+                gelf-address: "udp://${IP_ADDRESS}:12201"
+
   mysql:
     image: mysql:5.7
     container_name: mysql
+    networks:
+      - ${CONTAINER_NETWORK}
     expose:
       - 3306
     environment:
@@ -91,23 +152,34 @@ services:
       - MYSQL_PASSWORD=rundeck
     volumes:
       - dbdata:/var/lib/mysql
+    restart: unless-stopped
+    logging:
+            driver: "gelf"
+            options:
+                gelf-address: "udp://${IP_ADDRESS}:12201"
 
   unms:
     image: nico640/docker-unms:latest
     container_name: unms
-    restart: always
+    restart: unless-stopped
     networks:
       - ${CONTAINER_NETWORK}
     environment: 
       - TZ=${TZ}
+        #- PUID=${PUID}
+        #- PGID=${PGID}
+      - PUBLIC_HTTPS_PORT=443
     volumes:
       - '${USERDIR}/unms:/config'
     labels:
       - "traefik.enable=true"
       - "traefik.backend=unms"
       - "traefik.port=443"
-      #- "traefik.http.routers.unms-secure.rule=Host(`unms.${DOMAIN}`)"
-      #- "traefik.http.routers.unms-secure.tls=true"
+      - "traefik.http.routers.unms.entrypoints=web"
+      - "traefik.http.routers.unms.rule=Host(`unms.${DOMAIN}`)"
+      - "traefik.http.services.unms.loadbalancer.server.port=80"
+      # - "traefik.http.routers.unms-secure.rule=Host(`unms.${DOMAIN}`)"
+      # - "traefik.http.routers.unms-secure.tls=true"
       - "traefik.tcp.routers.unms.entrypoints=web-secure"
       - "traefik.tcp.routers.unms.rule=HostSNI(`unms.panther.local`)"
       - "traefik.tcp.routers.unms.tls=true"
@@ -117,15 +189,17 @@ services:
       - "traefik.udp.routers.netflow.entrypoints=netflow"
       - "traefik.udp.routers.netflow.service=netflow"
       - "traefik.udp.services.netflow.loadbalancer.server.port=2055"
+
       
 
   unifi-controller:
-    image: ghcr.io/linuxserver/unifi-controller
+    image: ghcr.io/linuxserver/unifi-controller:latest
     container_name: unifi-controller
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
-      - MEM_LIMIT=1024M #optional
+      - MEM_LIMIT=1024 #optional
+      - MEM_STARTUP=1024 #optional
     volumes:
       - ${USERDIR}/unifi:/config
     ports:
@@ -155,12 +229,44 @@ services:
       - "traefik.tcp.routers.unifi.tls.passthrough=true"
       - "traefik.tcp.routers.unifi.service=unifi"
       - "traefik.tcp.services.unifi.loadbalancer.server.port=8443"
-      - "traefik.udp.routers.discovery.entrypoints=discovery"
+      # - "traefik.udp.routers.discovery.entrypoints=discovery"
       - "traefik.udp.routers.discovery.service=discovery"
       - "traefik.udp.services.discovery.loadbalancer.server.port=1900"
 
+  opensearch: # This is also the hostname of the container within the Docker network (i.e. https://opensearch-node1/)
+    image: opensearchproject/opensearch:latest # Specifying the latest available image - modify if you want a specific version
+    container_name: opensearch
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    environment:
+      - cluster.name=opensearch-cluster # Name the cluster
+      - node.name=opensearch-node1 # Name the node that will run in this container
+      - discovery.seed_hosts=opensearch-node1,opensearch-node2 # Nodes to look for when discovering the cluster
+      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2 # Nodes eligible to serve as cluster manager
+      - bootstrap.memory_lock=true # Disable JVM heap memory swapping
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" # Set min and max JVM heap sizes to at least 50% of system RAM
+      - "DISABLE_SECURITY_PLUGIN=true" # Disables Security plugin
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+    ulimits:
+      memlock:
+        soft: -1 # Set memlock to unlimited (no soft or hard limit)
+        hard: -1
+      nofile:
+        soft: 65536 # Maximum number of open files for the opensearch user - set to at least 65536
+        hard: 65536
+    volumes:
+      - opensearch_nas:/usr/share/opensearch/data:rw # Creates volume called opensearch-data1 and mounts it to the container
+      - "${USERDIR}/opensearch/config/opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "./certs:/usr/share/opensearch/config/certificates:ro"
+    # ports:
+    #   - 9200:9200 # REST API
+    #   - 9600:9600 # Performance Analyzer
+    networks:
+      - traefik_proxy  # All of the containers will join the same Docker bridge network
+
   graylog:
-    image: graylog/graylog:4.0.7-1
+    image: graylog/graylog:5.2.2
     container_name: graylog
     volumes:
       - 'graylog_nas:/usr/share/graylog/data'
@@ -179,6 +285,7 @@ services:
     links:
       - mongodb:mongodb
       - elasticsearch
+      - opensearch
       
     depends_on:
       - mongodb
@@ -186,7 +293,7 @@ services:
       
     ports:
       # Graylog web interface and REST API
-      #- 9999:9000
+      - 9999:9000
       # Syslog TCP
       - 1514:1514
       # Syslog UDP
@@ -205,7 +312,7 @@ services:
       - "traefik.port=9000"
       #- "traefik.docker.network=traefik_proxy"
       - "traefik.http.routers.graylog.entrypoints=web"
-        #- "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAINNAME}`)"
+      - "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAIN}`)"
       - "traefik.http.middlewares.graylog-https-redirect.redirectscheme.scheme=https"
       - "traefik.http.routers.graylog.middlewares=graylog-https-redirect"
       - "traefik.http.routers.graylog-secure.entrypoints=web-secure"
@@ -225,31 +332,54 @@ services:
       - "traefik.udp.services.netflow.loadbalancer.server.port=2055"
 
     restart: unless-stopped
+    logging:
+            driver: "gelf"
+            options:
+                gelf-address: "udp://${IP_ADDRESS}:12201"
 
   wireguard:
-    image: ghcr.io/linuxserver/wireguard
-    container_name: wireguard
+    container_name: wg-manager
+    image: perara/wg-manager
+    restart: always
+    network_mode: 'host' 
+    # networks:
+    #   - traefik_proxy
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ={TZ|}
-      - SERVERURL=wireguard.${DOMAIN} #optional
-      - SERVERPORT=51820 #optional
-      - PEERS=1 #optional
-      - PEERDNS=auto #optional
-      #- INTERNAL_SUBNET=10.13.13.0 #optional
-      - ALLOWEDIPS=0.0.0.0/0 #optional
+      - NET_RAW
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    # ports:
+    #   #  - 51800-51900:51800-51900/udp
+    #    - '${IP_ADDRESS}:15919:15919/udp'
+    #    - 8888:8888
     volumes:
-      - ${USERDIR}/wireguard/config:/config
+      - ./wg-manager:/config
+      - ./wg-manager:/etc/wireguard
       - /lib/modules:/lib/modules
-    ports:
-      - 51820:51820/udp
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    restart: unless-stopped
+    # sysctls:
+    #   - net.ipv4.conf.all.src_valid_mark=1
+    #   - net.ipv4.ip_forward=1
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8888
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin
+      WEB_CONCURRENCY: 1
+      SERVER_INIT_INTERFACE_START: 1
+      SERVER: 1
+      SERVER_INIT_INTERFACE: '{"address":"10.0.200.1","subnet":24,"interface":"wg0","listen_port":"15919","endpoint":"server","dns":"10.0.200.1,192.168.15.75","private_key":"","public_key":"","post_up":"","post_down":"","configuration":"","is_running":false,"peers":[]}'
+      SERVER_STARTUP_API_KEY: thisisasecretkeythatnobodyknows
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=wg"
+      - "traefik.port=8888"
+      - "traefik.http.routers.wg.entrypoints=web"
+      - "traefik.http.routers.wg.rule=Host(`wg.${DOMAIN}`)"
+      - "traefik.http.services.wg.loadbalancer.server.port=8888"
 
 
 networks:
@@ -265,7 +395,7 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: addr=192.168.15.61,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+      o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
       device: ":/volume2/graylog"
   mongo_data:
     driver: local
@@ -275,5 +405,12 @@ volumes:
     driver: local
     driver_opts:
         type: nfs
-        o: addr=192.168.15.61,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
         device: ":/volume2/esdata"
+  opensearch_nas:
+    driver: local
+    driver_opts:
+        type: nfs
+        o: addr=alphanas.panther.local,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume1/opensearch/data"
+
