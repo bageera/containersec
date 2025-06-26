@@ -130,7 +130,7 @@ services:
       - "traefik.backend=rundeck"
       - "traefik.port=4440"
       - "traefik.http.routers.rundeck.entrypoints=web"
-      - "traefik.http.routers.rundeck.rule=Host(rundeck.${DOMAIN})"
+      - "traefik.http.routers.rundeck.rule=Host(`rundeck.${DOMAIN}`)"
       - "traefik.http.services.rundeck.loadbalancer.server.port=4440"
     restart: unless-stopped
     healthcheck:
