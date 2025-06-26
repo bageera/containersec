@@ -5,3 +5,10 @@ unms
 grailsdb.*
 graylog/etc/*
 unifi/*
+wireguard/*
+graylog/*
+certs/*
+rundeck/*
+opensearch/*
+wg-manager/*
+*_old/*

@@ -70,12 +70,12 @@ services:
       - http.host=0.0.0.0
       - transport.host=localhost
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - cluster.name=panther-cluster
+      - cluster.name=panther-alpha-cluster
       - discovery.type=single-node
       - node.name=es01
       #- bootstrap.memory_lock=true
       #- "bootstrap.password=false"
-      #- "xpack.security.enabled=false"
+      - "xpack.security.enabled=true"
       #- "ingest.geoip.downloader.enabled=false"
       #- xpack.license.self_generated.type=trial
       # - ES_SETTING_BOOTSTRAP_MEMORY__LOCK=true
@@ -99,64 +99,51 @@ services:
                 gelf-address: "udp://${IP_ADDRESS}:12201"
 
   rundeck:
-    image: rundeck/rundeck:3.2.8
+    image: rundeck/rundeck:5.0.1
     container_name: rundeck
     dns:
       - 9.9.9.9
-    networks:
+    networks: 
       - traefik_proxy
-    links:
-      - mysql
+
     environment:
-      - "RUNDECK_ADMIN_PASSWORD='jsohan566'"
+      - "RUNDECK_ADMIN_PASSWORD=${RUNDECK_ADMIN_PASSWORD}"
       - "RUNDECK_SERVER_FORWARDED=true"
       - "RUNDECK_GRAILS_URL=http://rundeck.panther.local"
       - "EXTERNAL_SERVER_URL=http://rundeck.panther.local"
       - "RUNDECK_UID=${PUID}"
       - "RUNDECK_GID=${PGID}"
       - "RUNDECK_JAAS_MODULES_1=PropertyFileLoginModule"
-      - "RUNDECK_DATABASE_DRIVER=com.mysql.jdbc.Driver"
-      - "RUNDECK_DATABASE_USERNAME=rundeck"
-      - "RUNDECK_DATABASE_PASSWORD=rundeck"
-      - "RUNDECK_DATABASE_URL=jdbc:mysql://mysql/rundeck?autoReconnect=true&useSSL=false"
+      - "RUNDECK_DATABASE_DRIVER=org.mariadb.jdbc.Driver"
+      - "RUNDECK_DATABASE_USERNAME=${RUNDECK_DATABASE_USERNAME}"
+      - "RUNDECK_DATABASE_PASSWORD=${RUNDECK_DB_PASSWORD}"
+      - "RUNDECK_DATABASE_URL=jdbc:mysql://192.168.15.230/rundeck?autoReconnect=true&useSSL=false"
 
     volumes:
-      #- '${USERDIR}/rundeck/etc:/home/rundeck/etc'
-      - '${USERDIR}/rundeck/config:/home/rundeck/server/config'
-      - '${USERDIR}/rundeck/data:/home/rundeck/server/data'
+      - '${USERDIR}/rundeck/config/realm.properties:/home/rundeck/server/config/realm.properties'
+      - ${USERDIR}/rundeck/libext:/home/rundeck/libext
+      - ${USERDIR}/rundeck/logs:/home/rundeck/var/logs
       - '/home/bageera/.ssh:/home/rundeck/.ssh'
+      - '/sys:/sys:ro'
     labels:
       - "traefik.enable=true"
       - "traefik.backend=rundeck"
       - "traefik.port=4440"
       - "traefik.http.routers.rundeck.entrypoints=web"
-      - "traefik.http.routers.rundeck.rule=Host(`rundeck.${DOMAIN}`)"
+      - "traefik.http.routers.rundeck.rule=Host(rundeck.${DOMAIN})"
       - "traefik.http.services.rundeck.loadbalancer.server.port=4440"
     restart: unless-stopped
-    logging:
-            driver: "gelf"
-            options:
-                gelf-address: "udp://${IP_ADDRESS}:12201"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4440"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
 
-  mysql:
-    image: mysql:5.7
-    container_name: mysql
-    networks:
-      - ${CONTAINER_NETWORK}
-    expose:
-      - 3306
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=rundeck
-      - MYSQL_USER=rundeck
-      - MYSQL_PASSWORD=rundeck
-    volumes:
-      - dbdata:/var/lib/mysql
-    restart: unless-stopped
-    logging:
-            driver: "gelf"
-            options:
-                gelf-address: "udp://${IP_ADDRESS}:12201"
+    # logging:
+    #         driver: "gelf"
+    #         options:
+    #             gelf-address: "udp://${IP_ADDRESS}:12201"
+
 
   unms:
     image: nico640/docker-unms:latest
@@ -207,7 +194,7 @@ services:
       - 10001:10001/udp
       - 8080:8080
       #- 8443:8443
-      - 1900:1900/udp #optional
+      # - 1900:1900/udp #optional
       - 8843:8843 #optional
       - 8880:8880 #optional
       - 6789:6789 #optional
@@ -229,51 +216,21 @@ services:
       - "traefik.tcp.routers.unifi.tls.passthrough=true"
       - "traefik.tcp.routers.unifi.service=unifi"
       - "traefik.tcp.services.unifi.loadbalancer.server.port=8443"
-      # - "traefik.udp.routers.discovery.entrypoints=discovery"
-      - "traefik.udp.routers.discovery.service=discovery"
-      - "traefik.udp.services.discovery.loadbalancer.server.port=1900"
-
-  opensearch: # This is also the hostname of the container within the Docker network (i.e. https://opensearch-node1/)
-    image: opensearchproject/opensearch:latest # Specifying the latest available image - modify if you want a specific version
-    container_name: opensearch
-    security_opt:
-      - seccomp:unconfined
-      - apparmor:unconfined
-    environment:
-      - cluster.name=opensearch-cluster # Name the cluster
-      - node.name=opensearch-node1 # Name the node that will run in this container
-      - discovery.seed_hosts=opensearch-node1,opensearch-node2 # Nodes to look for when discovering the cluster
-      - cluster.initial_cluster_manager_nodes=opensearch-node1,opensearch-node2 # Nodes eligible to serve as cluster manager
-      - bootstrap.memory_lock=true # Disable JVM heap memory swapping
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" # Set min and max JVM heap sizes to at least 50% of system RAM
-      - "DISABLE_SECURITY_PLUGIN=true" # Disables Security plugin
-      - "DISABLE_INSTALL_DEMO_CONFIG=true"
-    ulimits:
-      memlock:
-        soft: -1 # Set memlock to unlimited (no soft or hard limit)
-        hard: -1
-      nofile:
-        soft: 65536 # Maximum number of open files for the opensearch user - set to at least 65536
-        hard: 65536
-    volumes:
-      - opensearch_nas:/usr/share/opensearch/data:rw # Creates volume called opensearch-data1 and mounts it to the container
-      - "${USERDIR}/opensearch/config/opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
-      - "./certs:/usr/share/opensearch/config/certificates:ro"
-    # ports:
-    #   - 9200:9200 # REST API
-    #   - 9600:9600 # Performance Analyzer
-    networks:
-      - traefik_proxy  # All of the containers will join the same Docker bridge network
+      - "traefik.udp.routers.unifidiscovery.entrypoints=unifidiscovery"
+      - "traefik.udp.routers.unifidiscovery.service=unifidiscovery"
+      - "traefik.udp.services.unifidiscovery.loadbalancer.server.port=1900"
 
   graylog:
-    image: graylog/graylog:5.2.2
+    image: graylog/graylog:6.1.5
     container_name: graylog
     volumes:
       - 'graylog_nas:/usr/share/graylog/data'
-      - '${USERDIR}/graylog/plugin:/graytemp'
-      - '${USERDIR}/graylog/etc:/etc/graylog'
+      - '${USERDIR}/graylog/plugin:/usr/share/graylog/plugin'
+      # - '${USERDIR}/graylog/etc/server:/etc/graylog/server'
+      - '${USERDIR}/graylog/config:/usr/share/graylog/data/config'
     networks:
       - traefik_proxy
+    entrypoint: "/usr/bin/tini --  /docker-entrypoint.sh"
     environment:
       # CHANGE ME (must be at least 16 characters)!
       # Generate one by using for example: pwgen -N 1 -s 96
@@ -281,15 +238,18 @@ services:
       # Password: admin
       - GRAYLOG_ROOT_PASSWORD_SHA2=${GRAYLOG_ROOT_SHA}
       - GRAYLOG_HTTP_EXTERNAL_URI=http://graylog.${DOMAIN}/
-      - 'GRAYLOG_MONGODB_URI=mongodb://${GRAYLOG_USER}:${GRAYLOG_PASS}@mongodb/${GRAYLOG_DB}'
+      - 'GRAYLOG_MONGODB_URI=mongodb://${GRAYLOG_USER}:${GRAYLOG_MONGO_PASS}@mongodb/${GRAYLOG_DB}'
     links:
       - mongodb:mongodb
-      - elasticsearch
-      - opensearch
+      # - elasticsearch
+      # - opensearch
+      # - opensearch-node2
       
     depends_on:
       - mongodb
-      - elasticsearch
+      # - elasticsearch
+      # - opensearch
+      # - opensearch-node2
       
     ports:
       # Graylog web interface and REST API
@@ -312,6 +272,7 @@ services:
       - "traefik.port=9000"
       #- "traefik.docker.network=traefik_proxy"
       - "traefik.http.routers.graylog.entrypoints=web"
+      - "traefik.http.routers.graylog.ruleSyntax=v3"
       - "traefik.http.routers.graylog.rule=Host(`graylog.${DOMAIN}`)"
       - "traefik.http.middlewares.graylog-https-redirect.redirectscheme.scheme=https"
       - "traefik.http.routers.graylog.middlewares=graylog-https-redirect"
@@ -321,6 +282,8 @@ services:
       - "traefik.http.routers.graylog-secure.tls.certresolver=http"
       - "traefik.http.routers.graylog-secure.service=graylog"
       - "traefik.http.services.graylog.loadbalancer.server.port=9000"
+      - "traefik.http.routers.graylog.middlewares=graylog-header"
+      - "traefik.http.middlewares.graylog-header.headers.customrequestheaders.X-Graylog-Server-URL=http://graylog.${DOMAIN}/"
       - "traefik.udp.routers.syslog.entrypoints=syslog"
       - "traefik.udp.routers.syslog.service=syslog"
       - "traefik.udp.services.syslog.loadbalancer.server.port=1514"
@@ -407,10 +370,23 @@ volumes:
         type: nfs
         o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
         device: ":/volume2/esdata"
-  opensearch_nas:
+  opensearch_anas.vol:
     driver: local
     driver_opts:
         type: nfs
-        o: addr=alphanas.panther.local,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
-        device: ":/volume1/opensearch/data"
+        o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume2/osdata/node1"
+  opensearch_node2_anas.vol:
+    driver: local
+    driver_opts:
+        type: nfs
+        o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume2/osdata/node2"
+        
+  opensearch_config.vol:
+    driver: local
+    driver_opts:
+        type: nfs
+        o: addr=192.168.15.77,nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,rw
+        device: ":/volume2/services/opensearch"
 
